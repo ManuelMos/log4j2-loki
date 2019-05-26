@@ -27,7 +27,7 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
-@Plugin(name = "Elastic", category = "Core", elementType = "appender", printObject = true)
+@Plugin(name = "Loki", category = "Core", elementType = "appender", printObject = true)
 public class LokiAppender extends AbstractAppender {
 
     /** The labels. */
