@@ -2,6 +2,7 @@ package com.moserman.log4j2.appender;
 
 import com.mashape.unirest.http.HttpResponse;
 import com.mashape.unirest.http.Unirest;
+import com.mashape.unirest.http.async.Callback;
 import com.mashape.unirest.http.exceptions.UnirestException;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -25,15 +26,19 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatterBuilder;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 @Plugin(name = "Loki", category = "Core", elementType = "appender", printObject = true)
 public class LokiAppender extends AbstractAppender {
 
-    /** The labels. */
-    private String labels;
+    /** The labelValue. */
+    private final String labelValue;
+    /** The labelKey. */
+    private String labelKey;
 
-    private DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
+    /**  the DateTimeFormmater */
+    private DateTimeFormatter formatter =  new DateTimeFormatterBuilder().appendInstant(3).toFormatter();
 
     /** The targetHost */
     private String targetHost;
@@ -41,8 +46,12 @@ public class LokiAppender extends AbstractAppender {
     /** hostName where logs are from. */
     private String hostName;
 
-    /** The labels missing. */
-    private boolean labelsMissing;
+    /** The labelKey missing. */
+    private boolean labelKeyMissing;
+
+    /** The labelvalue missing. */
+    private boolean labelValueMissing;
+
 
     /** The targetHost missing. */
     private boolean targetHostMissing;
@@ -63,12 +72,14 @@ public class LokiAppender extends AbstractAppender {
     }
 
     private LokiAppender(String name, Filter filter, Layout<? extends Serializable> layout,
-                         boolean ignoreExceptions, String target, String labels) {
+                         boolean ignoreExceptions, String target, String labelKey, String labelValue) {
         super(name, filter, layout, ignoreExceptions);
-        this.labels = labels;
+        this.labelKey = labelKey;
+        this.labelValue = labelValue;
         this.targetHost = target;
         this.targetHostMissing = StringUtils.isBlank(target);
-        this.labelsMissing = StringUtils.isBlank(labels);
+        this.labelKeyMissing = StringUtils.isBlank(labelKey);
+        this.labelValueMissing = StringUtils.isBlank(labelValue);
         try {
             this.hostName = StringEscapeUtils.escapeJson(InetAddress.getLocalHost().getHostName());
         } catch (UnknownHostException e) {
@@ -83,7 +94,8 @@ public class LokiAppender extends AbstractAppender {
      * @param ignoreExceptions the ignore exceptions
      * @param layout the layout
      * @param filter the filter
-     * @param labels the labels
+     * @param labelKey the labelKey
+     * @param labelValue the labelValue
      * @return the elastic log appender
      */
     @PluginFactory
@@ -92,20 +104,21 @@ public class LokiAppender extends AbstractAppender {
                                                     @PluginElement("Layout") Layout layout,
                                                     @PluginElement("Filters") Filter filter,
                                                     @PluginAttribute("targetHost") String targetHost,
-                                                    @PluginAttribute("labels") String labels) {
+                                                    @PluginAttribute("labelKey") String labelKey,
+                                                    @PluginAttribute("labelValue") String labelValue) {
 
         if (layout == null) {
             layout = PatternLayout.newBuilder().withPattern("%m").withAlwaysWriteExceptions(false).build();
         }
 
-        return new LokiAppender(name, filter, layout, ignoreExceptions, targetHost, StringEscapeUtils.escapeJson(labels));
+        return new LokiAppender(name, filter, layout, ignoreExceptions, targetHost, labelKey, labelValue);
     }
 
 
 
     public void append(LogEvent event) {
-        if (labelsMissing) {
-            throw new RuntimeException("labels setting missing");
+        if (labelKeyMissing) {
+            throw new RuntimeException("labelKey setting missing");
         }
 
         if(targetHostMissing){
@@ -126,13 +139,12 @@ public class LokiAppender extends AbstractAppender {
 
         ZonedDateTime timestamp = Instant.ofEpochMilli(event.getTimeMillis()).atZone(ZoneOffset.UTC);
 
-        try {
-            HttpResponse<String> response = Unirest.post(targetHost + "/api/prom/push")
+        Unirest.post(targetHost + "/api/prom/push")
                     .header("Content-Type", "application/json")
                     .header("Accept", "*/*")
                     .body("{\"streams\": " +
                             "[{" +
-                                "\"labels\": \"{"+ labels +"}\"," +
+                                "\"labels\": \"{"+ labelKey +"=\\\""+ labelValue+ "\\\"}\"," +
                                 "\"entries\": [{ \"ts\": \"" +
                                     timestamp.format(formatter) +
                             "\", " +
@@ -146,20 +158,28 @@ public class LokiAppender extends AbstractAppender {
                                   " stacktrace=" + stacktrace +
                             "\" }]" +
                             "}]}")
-                    .asString();
-            if(response.getStatus() != 204){
-                System.out.println("Could not send event to Loki: " + response.getStatus() + " " + response.getBody() +
-                        "\r\n" +   "level="  + event.getLevel().toString() +
-                        " host="  + hostName + " " +
-                        " logger=" + event.getLoggerName() +
-                        " class=" + className +
-                        " message=" + message +
-                        " additional= " + getAdditional(event) +
-                        " stacktrace=" + stacktrace);
-            }
-        } catch (UnirestException e) {
-            e.printStackTrace();
-        }
+                    .asStringAsync(new Callback<String>() {
+                        @Override
+                        public void completed(HttpResponse<String> response) {
+
+                        }
+
+                        @Override
+                        public void failed(UnirestException e) {
+                            System.out.println("Could not send event to Loki: " + e.getCause() + " " + e.getMessage()+
+                                    "\r\n" +   "level="  + event.getLevel().toString() +
+                                    " host="  + hostName + " " +
+                                    " logger=" + event.getLoggerName() +
+                                    " message=" + message +
+                                    " additional= " + getAdditional(event));
+                        }
+
+                        @Override
+                        public void cancelled() {
+
+                        }
+        });
+
     }
     private String getAdditional(LogEvent event) {
         ConcurrentLinkedQueue<String> additional = new ConcurrentLinkedQueue<>();
