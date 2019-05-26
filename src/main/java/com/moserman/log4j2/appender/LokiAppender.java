@@ -18,6 +18,7 @@ import org.apache.logging.log4j.core.config.plugins.PluginElement;
 import org.apache.logging.log4j.core.config.plugins.PluginFactory;
 import org.apache.logging.log4j.core.layout.PatternLayout;
 import org.apache.logging.log4j.util.TriConsumer;
+import sun.rmi.runtime.Log;
 
 import java.io.Serializable;
 import java.net.InetAddress;
@@ -27,7 +28,11 @@ import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeFormatterBuilder;
+import java.util.LinkedList;
+import java.util.Queue;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.function.Consumer;
 
 @Plugin(name = "Loki", category = "Core", elementType = "appender", printObject = true)
 public class LokiAppender extends AbstractAppender {
@@ -36,6 +41,8 @@ public class LokiAppender extends AbstractAppender {
     private final String labelValue;
     /** The labelKey. */
     private String labelKey;
+
+    Queue<String> queue = new LinkedList<>();
 
     /**  the DateTimeFormmater */
     private DateTimeFormatter formatter =  new DateTimeFormatterBuilder().appendInstant(3).toFormatter();
@@ -85,6 +92,37 @@ public class LokiAppender extends AbstractAppender {
         } catch (UnknownHostException e) {
             throw new RuntimeException(e);
         }
+
+        Thread thread = new Thread(() -> {
+           do{
+               if(!queue.isEmpty()) {
+                   String x = queue.poll();
+                   HttpResponse<String> accept = null;
+                   try {
+                       accept = Unirest.post(targetHost + "/api/prom/push")
+                               .header("Content-Type", "application/json")
+                               .header("Accept", "*/*")
+                               .body(x)
+                               .asString();
+                   } catch (UnirestException e) {
+                       e.printStackTrace();
+                   }
+                   if (accept.getStatus() != 204) {
+                       System.out.println("Could not send event to Loki: " + accept.getStatus() + " " + accept.getBody() + " " + x);
+                   }
+               } else {
+                   try {
+                       Thread.sleep(2000);
+                   } catch (InterruptedException e) {
+                       e.printStackTrace();
+                   }
+               }
+           }while(true);
+        });
+
+        thread.start();
+
+
     }
 
     /**
@@ -117,8 +155,13 @@ public class LokiAppender extends AbstractAppender {
 
 
     public void append(LogEvent event) {
+
         if (labelKeyMissing) {
             throw new RuntimeException("labelKey setting missing");
+        }
+
+        if (labelValueMissing){
+            throw new RuntimeException("labelValue setting missing");
         }
 
         if(targetHostMissing){
@@ -139,46 +182,26 @@ public class LokiAppender extends AbstractAppender {
 
         ZonedDateTime timestamp = Instant.ofEpochMilli(event.getTimeMillis()).atZone(ZoneOffset.UTC);
 
-        Unirest.post(targetHost + "/api/prom/push")
-                    .header("Content-Type", "application/json")
-                    .header("Accept", "*/*")
-                    .body("{\"streams\": " +
-                            "[{" +
-                                "\"labels\": \"{"+ labelKey +"=\\\""+ labelValue+ "\\\"}\"," +
-                                "\"entries\": [{ \"ts\": \"" +
-                                    timestamp.format(formatter) +
-                            "\", " +
-                                "\"line\": \"" +
-                                  "level="  + event.getLevel().toString() +
-                                  " host="  + hostName + " " +
-                                  " logger=" + event.getLoggerName() +
-                                  " class=" + className +
-                                  " message=" + message +
-                                  " additional= " + getAdditional(event) +
-                                  " stacktrace=" + stacktrace +
-                            "\" }]" +
-                            "}]}")
-                    .asStringAsync(new Callback<String>() {
-                        @Override
-                        public void completed(HttpResponse<String> response) {
+        String body = "{\"streams\": " +
+                "[{" +
+                "\"labels\": \"{" + labelKey + "=\\\"" + labelValue + "\\\"}\"," +
+                "\"entries\": [{ \"ts\": \"" +
+                timestamp.format(formatter) +
+                "\", " +
+                "\"line\": \"" +
+                "level=" + event.getLevel().toString() +
+                " host=" + hostName + " " +
+                " logger=" + event.getLoggerName() +
+                " class=" + className +
+                " message=" + message +
+                " additional= " + getAdditional(event) +
+                " stacktrace=" + stacktrace +
+                "\" }]" +
+                "}]}";
 
-                        }
+        queue.add(body);
 
-                        @Override
-                        public void failed(UnirestException e) {
-                            System.out.println("Could not send event to Loki: " + e.getCause() + " " + e.getMessage()+
-                                    "\r\n" +   "level="  + event.getLevel().toString() +
-                                    " host="  + hostName + " " +
-                                    " logger=" + event.getLoggerName() +
-                                    " message=" + message +
-                                    " additional= " + getAdditional(event));
-                        }
 
-                        @Override
-                        public void cancelled() {
-
-                        }
-        });
 
     }
     private String getAdditional(LogEvent event) {
