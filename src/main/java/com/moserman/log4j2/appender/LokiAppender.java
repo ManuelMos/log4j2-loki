@@ -35,8 +35,8 @@ public class LokiAppender extends AbstractAppender {
 
     private DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
 
-    /** The target host */
-    private String target;
+    /** The targetHost */
+    private String targetHost;
 
     /** hostName where logs are from. */
     private String hostName;
@@ -44,7 +44,7 @@ public class LokiAppender extends AbstractAppender {
     /** The labels missing. */
     private boolean labelsMissing;
 
-    /** The target missing. */
+    /** The targetHost missing. */
     private boolean targetHostMissing;
 
 
@@ -66,7 +66,7 @@ public class LokiAppender extends AbstractAppender {
                          boolean ignoreExceptions, String target, String labels) {
         super(name, filter, layout, ignoreExceptions);
         this.labels = labels;
-        this.target = target;
+        this.targetHost = target;
         this.targetHostMissing = StringUtils.isBlank(target);
         this.labelsMissing = StringUtils.isBlank(labels);
         try {
@@ -91,14 +91,14 @@ public class LokiAppender extends AbstractAppender {
                                                     @PluginAttribute("ignoreExceptions") boolean ignoreExceptions,
                                                     @PluginElement("Layout") Layout layout,
                                                     @PluginElement("Filters") Filter filter,
-                                                    @PluginElement("target") String target,
+                                                    @PluginAttribute("targetHost") String targetHost,
                                                     @PluginAttribute("labels") String labels) {
 
         if (layout == null) {
             layout = PatternLayout.newBuilder().withPattern("%m").withAlwaysWriteExceptions(false).build();
         }
 
-        return new LokiAppender(name, filter, layout, ignoreExceptions,StringEscapeUtils.escapeJson(target), StringEscapeUtils.escapeJson(labels));
+        return new LokiAppender(name, filter, layout, ignoreExceptions,StringEscapeUtils.escapeJson(targetHost), StringEscapeUtils.escapeJson(labels));
     }
 
 
@@ -127,7 +127,7 @@ public class LokiAppender extends AbstractAppender {
         ZonedDateTime timestamp = Instant.ofEpochMilli(event.getTimeMillis()).atZone(ZoneOffset.UTC);
 
         try {
-            HttpResponse<String> response = Unirest.post(target + "/api/prom/push")
+            HttpResponse<String> response = Unirest.post(targetHost + "/api/prom/push")
                     .header("Content-Type", "application/json")
                     .header("Accept", "*/*")
                     .body("{\"streams\": " +
