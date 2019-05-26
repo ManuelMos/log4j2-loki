@@ -98,7 +98,7 @@ public class LokiAppender extends AbstractAppender {
             layout = PatternLayout.newBuilder().withPattern("%m").withAlwaysWriteExceptions(false).build();
         }
 
-        return new LokiAppender(name, filter, layout, ignoreExceptions,StringEscapeUtils.escapeJson(targetHost), StringEscapeUtils.escapeJson(labels));
+        return new LokiAppender(name, filter, layout, ignoreExceptions, targetHost, StringEscapeUtils.escapeJson(labels));
     }
 
 
